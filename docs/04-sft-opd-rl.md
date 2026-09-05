@@ -2,6 +2,8 @@
 
 > 本章解释训练机制和代表性实验配置。所有路径、服务地址、内部工具名和原始 Prompt 均已移除。不同实验使用了不同模型、数据配方和 Runtime，不能把它们误写成同一个 checkpoint 连续训练。
 
+我完成了本章涉及的 SFT、OPD 和 MoE LoRA RL 训练与相关适配。下面从监督信号、数据协议、训推对齐和分布式配置解释这些工作；框架本身提供的训练算法与算子不作为个人原创方法表述。
+
 ## 1. 为什么不是只做一次 SFT
 
 第二阶段证明了强模型配合 Skill 可以完成复杂取数，但直接把所有线上请求交给外部模型，会受到成本、延迟和并发限制。第三阶段的目标是把这些行为内化到专用模型中。
@@ -39,11 +41,13 @@ flowchart LR
 
 | 实验线 | 模型形态 | 主要训练方式 | 目的 |
 | --- | --- | --- | --- |
-| 长上下文 SFT | 约 30B 总参数、每 token 激活约 3B 的 MoE | 8 GPU 全参数微调 | 验证较大模型的多 Skill 行为上限 |
+| 长上下文 SFT | 命名为 30B 级、训练统计约 35B、每 token 激活约 3B 的 MoE | 8 GPU 全参数微调 | 验证较大模型的多 Skill 行为上限 |
 | OPD | 4B 级 Dense 学生 | SFT 后继续做全参数在线蒸馏 | 用教师修正学生自己的在线轨迹 |
 | Agent RL | 大型 MoE 基座 | 冻结 Base，仅训练 LoRA | 用任务 reward 优化工具执行能力 |
 
 30B SFT checkpoint 不能直接“继续训练成”4B OPD 学生；它们参数形状不同。DeepSeek 系列 LoRA RL 又是另一套模型结构。可以共享的是数据方法、Harness、Skill、Scorer 和工程经验，而不是直接共享权重。
+
+还要区分模型名称与参数统计：这条 SFT 线的“30B”来自命名，训练资料记录的总参数为约 35B 级别；总参数、可训练参数和每 token 激活参数也不是同一计数。第五章 4B/35B 的历史成绩表没有提供与这里各轮 checkpoint 的完整映射，不能因规模相似就将其分配给 OPD 或 LoRA RL，见 [实验索引](06-experiment-index.md)。
 
 ## 3. SFT：模型到底看到了什么
 
@@ -101,9 +105,9 @@ assistant think / call / answer labels = token_id，loss_mask=1
 
 SFT 交叉熵为：
 
-\[
+$$
 L_{SFT}=-\frac{1}{N}\sum_{t=1}^{N}\log P_\theta(y_t\mid x,y_{<t})
-\]
+$$
 
 代表性脚本使用 `loss_scale=ignore_empty_think`。它只忽略空的 thinking 区域，不代表删除所有 think，也不会改写 Teacher 的 think 内容。非空 thinking 是否训练，仍由样本与模板的 loss mask 决定。
 
@@ -148,23 +152,23 @@ L_{SFT}=-\frac{1}{N}\sum_{t=1}^{N}\log P_\theta(y_t\mid x,y_{<t})
 
 8 卡、SP=4 时，数据并行度近似为：
 
-\[
+$$
 DP=8/4=2
-\]
+$$
 
 有效全局序列 batch 近似为：
 
-\[
+$$
 1\;(micro)\times16\;(accumulation)\times2\;(DP)=32
-\]
+$$
 
 它是序列数，不是固定 token 数。Agent 轨迹长短差异很大，每个 optimizer step 的实际 token 量仍会变化。
 
-## 5. 为什么高显存 GPU 训练 30B MoE 仍然需要 ZeRO-3
+## 5. 为什么高显存 GPU 训练 MoE 仍然需要 ZeRO-3
 
 模型名中的 “A3” 只表示每个 token 参与计算的激活参数约为 3B，不表示训练时只需保存 3B 参数。
 
-全参数训练仍然要为全部约 30B 参数保存：
+训练时必须容纳完整模型，并为可训练参数保存梯度和优化器状态。主要开销包括：
 
 ```text
 BF16 模型权重
@@ -176,7 +180,7 @@ BF16 模型权重
 + attention、通信和临时 buffer
 ```
 
-只算 BF16 权重，30B 参数已经约为 60GB。加入梯度和 Adam 状态后，静态训练状态会达到数百 GB；102.4k 长上下文的 activation 又是另一块巨大开销。
+只算 BF16 权重，35B 级参数已经约为 70GB（十进制估算）。加入梯度和 Adam 状态后，静态训练状态会达到数百 GB；102.4k 长上下文的 activation 又是另一块巨大开销。
 
 两种并行解决的是不同问题：
 
@@ -296,9 +300,9 @@ return_logprob  = true
 
 教师只做 prefill，返回：
 
-\[
+$$
 \log P_{teacher}(y_t\mid y_{<t})
-\]
+$$
 
 其中 `y_t` 是学生实际生成的 token。训练位置按相同 token ID 对齐：
 
@@ -316,25 +320,25 @@ return_logprob  = true
 
 对学生实际采样 token：
 
-\[
+$$
 r_t^{reverseKL}=\log P_{student}(y_t)-\log P_{teacher}(y_t)
-\]
+$$
 
 纯 OPD 代表性实验把业务 reward 固定为 0，再构造：
 
-\[
+$$
 A_t=-\beta\left(\log P_{student}(y_t)-\log P_{teacher}(y_t)\right)
-\]
+$$
 
 当学生比教师更偏爱某个 token，advantage 为负；当教师比学生更认可这个 token，advantage 为正。随后进入 PPO-style clipped policy loss：
 
-\[
+$$
 ratio_t=\exp(\log P_{new}(y_t)-\log P_{old}(y_t))
-\]
+$$
 
-\[
+$$
 L_t=-\min\left(ratio_tA_t,\;clip(ratio_t,1-\epsilon_l,1+\epsilon_h)A_t\right)
-\]
+$$
 
 代表性配置：
 
@@ -479,13 +483,27 @@ Reward    = F1
 
 这样既惩罚漏查，也惩罚为了碰运气而大量查询无关指标。只对最终回答文字做 Judge，可能看不到 Agent 实际调用了错误指标。
 
+### 15.1 指标集合 reward 与业务正确性并不总是等价
+
+第一章中，完整月度值可能足以计算季度总量；如果 reward 严格匹配标签中的季度指标 ID，这条替代路径可能被记为漏查季度指标、又多查月度指标。对于“定位指定指标集合”的任务，这种约束可以合理；对于“给出可计算的业务答案”的任务，它可能只是有偏的代理目标。
+
+因此需要明确评分对象：计入集合的是搜索候选、发出的取数请求，还是成功返回有效数据的指标？是否接受口径一致、可计算的替代指标？探索动作与最终答案如何分别计分？当前公开示例没有给出完整等价规则，不能宣称 Set F1 已覆盖所有业务正确路径。
+
+回归 reward 时，可以使用 [项目地图中的合成 Case](00-project-map.md)，分别检查直接季度取数和月度求和路径。若业务定义接受两者，就应通过可验证的等价映射或计算校验处理；这属于评分设计要求，不代表历史版本已经实现。
+
+### 15.2 Reward 还要跟工具输出协议一起回归
+
+即使 F1 公式正确，parser 读不到当前工具返回中的指标字段，也会使有效调用无法计分。检查时应先验证工具返回能否解析、提取了多少目标、标签是否非空，再计算 reward。字段缺失和真实空集合应有不同状态，不能都静默当作 0。
+
+训练 reward 与离线 scorer 也可能使用不同目标或聚合方式。版本变化后，用固定合成 Case 对比期望集合、解析结果与最终分数，才知道分歧来自模型行为还是评分协议。
+
 ## 16. GRPO：同一道题的多次尝试怎样互相比较
 
 代表性实验对每道题启动 8 个独立 Agent Session。设它们的任务 reward 为 `r_1...r_8`：
 
-\[
+$$
 A_i=\frac{r_i-mean(r_1...r_8)}{std(r_1...r_8)+\epsilon}
-\]
+$$
 
 关键点是：reward=0.5 不一定得到正 advantage。如果同题其他尝试平均为 0.8，这条轨迹仍然相对较差；如果其他尝试平均为 0.2，它就是正向样本。
 
@@ -500,7 +518,7 @@ A_i=\frac{r_i-mean(r_1...r_8)}{std(r_1...r_8)+\epsilon}
 ```text
 assistant tool call           mask=1
 工具返回的大段数据              mask=0
-角色标记与模板胶水              mask=0
+环境注入的角色标记与模板胶水      mask=0
 assistant 分析和最终回答         mask=1
 ```
 
@@ -512,17 +530,17 @@ assistant 分析和最终回答         mask=1
 
 GRPO 产生 advantage 后，Actor 计算：
 
-\[
+$$
 ratio_t=\exp(\log P_{current}(y_t)-\log P_{old}(y_t))
-\]
+$$
 
 并在有效模型 token 上使用非对称 clip，例如 `[0.8, 1.28]`。正 advantage 提高动作概率，负 advantage 降低动作概率；clip 限制一次更新过大。
 
 LoRA 不直接改冻结权重 `W`：
 
-\[
+$$
 W_{effective}=W+\frac{\alpha}{r}BA
-\]
+$$
 
 代表性配置：
 
@@ -565,9 +583,9 @@ R3 解决的是“两个推理/训练引擎选了不同专家”。另一类 IS/
 
 对于 96k 上下文：
 
-\[
+$$
 96,000 / CP8 = 12,000\;token/context\;rank
-\]
+$$
 
 16 张 GPU 主要用于容纳 PP、EP、CP 组合后的大 MoE 和长上下文，而不是简单复制出大量数据并行副本。训练与 rollout 分阶段复用资源，并使用参数、梯度、优化器 offload 以及 FP8 KV cache 控制显存。
 
@@ -611,3 +629,7 @@ LoRA RL
 ```
 
 共同的底线是：训练、rollout 和部署必须使用一致的 tokenizer、template、tool parser 与 Runtime 协议；工具返回必须参与上下文但不参与模型 loss；训练 loss 必须回到统一 Agent 评测中验收。
+
+---
+
+[返回首页](../README.md) · [项目地图](00-project-map.md) · [实验与数据口径](06-experiment-index.md)
