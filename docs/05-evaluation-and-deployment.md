@@ -15,7 +15,7 @@ token loss下降
 ≠ 最终任务一定完成
 ```
 
-SFT 的 token accuracy 衡量标准轨迹上的 next-token 命中；OPD 的 student-teacher overlap 衡量分布接近程度；RL 的训练 reward 衡量当前采样组中的任务表现。三者都不是完整线上质量。
+SFT 的 token accuracy 衡量标准轨迹上的 next-token 命中；RL 的训练 reward 衡量当前采样组中的任务表现；OPD 的 student-teacher overlap 衡量分布接近程度。三者都不是完整线上质量。
 
 因此，所有 checkpoint 最后都要回到同一套 Agent 任务中，真正执行 Skill 和工具，再比较结果。
 
@@ -163,7 +163,7 @@ Trial
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | base | Runtime A | … | … | … | … | … | … | … |
 | SFT | Runtime A | … | … | … | … | … | … | … |
-| OPD / RL | Runtime A | … | … | … | … | … | … | … |
+| RL / OPD | Runtime A | … | … | … | … | … | … | … |
 | same checkpoint | Runtime B | … | … | … | … | … | … | … |
 
 如果同一 checkpoint 在两个 Runtime 中差距很大，优先检查 template、tool schema 映射、Skill 加载方式、并行调用表示和失败恢复，而不是立即重新训练模型。
@@ -347,7 +347,7 @@ weights
 flowchart LR
     A[线上/合成问题] --> B[Teacher或Policy轨迹]
     B --> C[数据清洗与协议校验]
-    C --> D[SFT / OPD / RL]
+    C --> D[SFT / RL / OPD]
     D --> E[Checkpoint转换]
     E --> F[统一Runtime部署]
     F --> G[模型×Runtime×Skill评测]
@@ -364,7 +364,7 @@ flowchart LR
 ## 16. 我在这一阶段真正学到什么
 
 1. Agent 后训练是数据、模板、Runtime、工具、Reward、分布式训练和评测共同组成的系统。
-2. SFT、OPD 和 RL 的监督对象不同，不能因为都复用了 PPO/GRPO 基础设施就混成一种算法。
+2. SFT、RL 和 OPD 的监督对象不同，不能因为都复用了 PPO/GRPO 基础设施就混成一种算法。
 3. Student、Teacher、Actor 和 Rollout Engine 之间的 token 对齐，比文本看起来相似更重要。
 4. MoE 每 token 激活参数少，不代表全参训练状态少；ZeRO-3、SP、PP、EP、CP 解决不同瓶颈。
 5. 训练 loss、蒸馏 overlap 和在线 reward 都是中间信号，最终仍要做真实 Agent 任务评测。

@@ -32,8 +32,8 @@
 | 实验代号 | 模型与训练 | 输入 / 监督信号 | 在仓库中的位置 |
 | --- | --- | --- | --- |
 | T-SFT | MoE 全参数 SFT | 离线 Teacher 轨迹 / response-only CE | 第三章、第四章 SFT 部分 |
-| T-OPD | 4B Dense 学生，SFT 后在线蒸馏 | 学生 rollout / 教师 token logprob | 第四章 OPD 部分 |
 | T-LoRA | 大型 MoE，冻结 Base 做 LoRA RL | 在线 Session / 多 Skill 业务 reward | 第四章 RL 部分 |
+| T-OPD | 4B Dense 学生，SFT 后在线蒸馏 | 学生 rollout / 教师 token logprob | 第四章 OPD 部分 |
 
 SFT 实现资料中的“30B”是模型命名口径，训练统计约为 35B 级别。名称、总参数、可训练参数和每 token 激活参数是不同字段。第五章成绩表中的“35B”也是规模标签，仍需 checkpoint 才能将某轮训练与某次成绩一一对应。
 

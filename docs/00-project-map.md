@@ -74,8 +74,8 @@
 | Agent / Skill | 构建目录树寻址 Agent，沉淀和迭代 Skill | 显式覆盖检查、兄弟节点探索、空结果回退和参数约束 | [第二章](02-agent-and-skill.md) |
 | 数据 | 完成逆向 QA 合成、Teacher 轨迹整理和训练协议转换 | 用真实执行约束标签；保留纠错上下文与原始调用分组 | [第三章](03-data-and-trajectory.md) |
 | SFT | 完成 MoE 全参数微调及数据、模板、监督 mask 适配 | response-only 监督，ZeRO-3 与序列并行支撑长轨迹 | [第四章](04-sft-opd-rl.md) |
-| OPD | 完成 4B 学生的在线蒸馏训练链路 | 学生真实 rollout，教师给学生 token 打分，处理历史重渲染后的 token 对齐 | [第四章](04-sft-opd-rl.md) |
 | LoRA RL | 完成 MoE 的 Agent 强化学习实验 | 按任务构造 reward，同题多 Session 比较，GRPO/PPO 更新及训推路由对齐 | [第四章](04-sft-opd-rl.md) |
+| OPD | 完成 4B 学生的在线蒸馏训练链路 | 学生真实 rollout，教师给学生 token 打分，处理历史重渲染后的 token 对齐 | [第四章](04-sft-opd-rl.md) |
 | 部署 / 验收 | 完成 checkpoint 转换、vLLM 部署与跨 Runtime 多 Skill 评测 | 把权重、模板、parser、Skill 和运行配置作为整体验收 | [第五章](05-evaluation-and-deployment.md) |
 
 MS-Swift、Slime、verl、Megatron、SGLang、vLLM 与 Agent Runtime 提供训练和执行基础设施。上表描述的是我围绕金融取数完成的数据、配置、适配、实验和评测工作；框架已有算法与算子应按框架能力理解。
@@ -92,7 +92,7 @@ MS-Swift、Slime、verl、Megatron、SGLang、vLLM 与 Agent Runtime 提供训�
 
 强模型配合 Skill 先验证了任务可行性，也留下了成功与纠错轨迹。随后我需要把这些轨迹变成专用模型能够学习的行为，而不只是收集最终答案。
 
-SFT 学习固定示范；OPD 让学生先行动，再取得教师对学生 token 的评价；任务 RL 根据最终结果比较同题的不同尝试。三者解决的问题不同，并不要求每个模型都按相同顺序训练。
+训练部分按 SFT → RL → OPD 讲述：先从固定示范学会基本执行，再用任务 reward 比较学生自己的多次尝试，随后引入教师对学生实际 token 的概率反馈。三者的监督信号逐步讲清，但各条实验使用不同模型，不是一条权重连续训练链。
 
 ## 3. 用一条合成问题贯穿整条链
 
@@ -128,10 +128,10 @@ Teacher Session 保存搜索、取数、空结果、回退和最终回答。转�
 
 同源问题产生的不同 Teacher、Runtime 和 slash/nonslash 版本，应在数据隔离时视为同一组。历史数据建设与更严格的切分要求见 [第三章](03-data-and-trajectory.md)。
 
-### 第四步：OPD 与 RL 怎样使用这道题
+### 第四步：RL 与 OPD 怎样使用这道题
 
-- **OPD**：学生自己走轨迹，教师评价这些真实生成 token 的概率；教师不替学生重新跑一条正确路径。
 - **任务 RL**：同题采样多条 Session，比较实际任务 reward。若 reward 只匹配季度指标 ID，丙的月度求和路径可能被低估；需要明确 reward 的任务范围与等价规则。
+- **OPD**：学生自己走轨迹，教师评价这些真实生成 token 的概率；教师不替学生重新跑一条正确路径。
 
 这里暴露出两个监督目标的差别：模仿教师偏好的动作，和满足业务完成标准，不一定给出完全相同的反馈。
 
